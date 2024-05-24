@@ -3,7 +3,11 @@ name = "pelakon"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = ["macros"]
+
 [dependencies]
+macros = { path = "macros" }
 
 [dev-dependencies]
 anyhow = "1.0.86"

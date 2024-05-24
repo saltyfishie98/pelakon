@@ -2,18 +2,20 @@ use std::{thread::sleep, time::Duration};
 
 use pelakon::*;
 
+#[derive(Message)]
 enum MyMessage {
     Data(u32),
     Exit,
 }
-impl Message for MyMessage {}
 
+#[derive(Message)]
 struct MyMessage2 {
     data: u32,
 }
-impl Message for MyMessage2 {}
 
-struct MyActor;
+struct MyActor {
+    state: u32,
+}
 impl Actor for MyActor {
     fn on_entry(&mut self) {
         println!("hello!");
@@ -22,34 +24,43 @@ impl Actor for MyActor {
         println!("exited!");
     }
 }
-impl Received<MyMessage> for MyActor {
+impl Receives<MyMessage> for MyActor {
     fn process(&mut self, msg: MyMessage, ctx: &mut Context<MyActor>) {
         match msg {
             MyMessage::Data(data) => {
                 if data == 0 {
+                    println!("MyMassage.data == {data} (sleeping for 5 secs)");
                     sleep(Duration::from_secs(5));
+                } else {
+                    self.state += data;
+                    println!("state = {}", self.state);
                 }
-                println!("MyMassage.data: {}", data);
             }
             MyMessage::Exit => ctx.terminate(),
         };
     }
 }
-impl Received<MyMessage2> for MyActor {
+impl Receives<MyMessage2> for MyActor {
     fn process(&mut self, msg: MyMessage2, _: &mut Context<MyActor>) {
         println!("MyMassage2.data: {}", msg.data);
     }
 }
 
 fn main() {
-    let handle = MyActor.start();
-    let sender = handle.clone_sender();
+    let handle = MyActor { state: 0 }.start();
+
+    let ctrlc_tx = handle.clone_sender();
     ctrlc::set_handler(move || {
-        sender.send(MyMessage::Exit);
+        ctrlc_tx.send(MyMessage::Exit);
+        println!(" cleanly exiting");
     })
-    .unwrap();
+    .expect("error setting ctrl-c handler!");
 
     handle.send(MyMessage::Data(0));
+    handle.send(MyMessage::Data(11));
+    handle.send(MyMessage2 { data: 42 });
+    handle.send(MyMessage::Data(0));
+    handle.send(MyMessage::Data(22));
     handle.send(MyMessage2 { data: 42 });
 
     handle.join().unwrap();

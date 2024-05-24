@@ -1,3 +1,4 @@
+pub use macros::*;
 use std::{
     sync::mpsc,
     thread::{self, JoinHandle, Result},
@@ -5,7 +6,7 @@ use std::{
 
 pub trait Message {}
 
-pub trait Received<T: Message>
+pub trait Receives<T: Message>
 where
     Self: Actor,
 {
@@ -32,7 +33,7 @@ impl<A: Actor> Sender<A> {
     pub fn send<M>(&self, msg: M)
     where
         M: Message + Send + 'static,
-        A: Received<M>,
+        A: Receives<M>,
     {
         self.tx.send(Envelope::new(msg)).unwrap();
     }
@@ -53,7 +54,7 @@ impl<A: Actor> Handle<A> {
     pub fn send<M>(&self, msg: M)
     where
         M: Message + Send + 'static,
-        A: Received<M>,
+        A: Receives<M>,
     {
         self.sender.send(msg);
     }
@@ -110,7 +111,7 @@ pub struct Envelope<A: Actor> {
 impl<A: Actor> Envelope<A> {
     fn new<M>(msg: M) -> Self
     where
-        A: Received<M>,
+        A: Receives<M>,
         M: Message + Send + 'static,
     {
         Envelope {
@@ -128,11 +129,11 @@ where
 impl<A, M> EnvelopeCallProxy<A> for EnvelopeProxy<M>
 where
     M: Message + Send + 'static,
-    A: Actor + Received<M>,
+    A: Actor + Receives<M>,
 {
     fn process(&mut self, act: &mut A, ctx: &mut Context<A>) {
         if let Some(msg) = self.msg.take() {
-            <A as Received<M>>::process(act, msg, ctx);
+            <A as Receives<M>>::process(act, msg, ctx);
         }
     }
 }
