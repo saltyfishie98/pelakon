@@ -5,6 +5,7 @@ use pelakon::*;
 #[derive(Message)]
 enum MyMessage {
     Data(u32),
+    Sleep(Duration),
     Exit,
 }
 
@@ -28,13 +29,12 @@ impl Receives<MyMessage> for MyActor {
     fn process(&mut self, msg: MyMessage, ctx: &mut Context<MyActor>) {
         match msg {
             MyMessage::Data(data) => {
-                if data == 0 {
-                    println!("MyMassage.data == {data} (sleeping for 5 secs)");
-                    sleep(Duration::from_secs(5));
-                } else {
-                    self.state += data;
-                    println!("state = {}", self.state);
-                }
+                self.state += data;
+                println!("state = {}", self.state);
+            }
+            MyMessage::Sleep(dur) => {
+                println!("sleeping for {} seconds", dur.as_secs_f32());
+                sleep(dur);
             }
             MyMessage::Exit => ctx.terminate(),
         };
@@ -47,21 +47,25 @@ impl Receives<MyMessage2> for MyActor {
 }
 
 fn main() {
-    let handle = MyActor { state: 0 }.start();
+    let contacts = MyActor { state: 0 }.start();
 
-    let ctrlc_tx = handle.clone_sender();
-    ctrlc::set_handler(move || {
-        ctrlc_tx.send(MyMessage::Exit);
-        println!(" cleanly exiting");
-    })
-    .expect("error setting ctrl-c handler!");
+    {
+        let ctrlc_tx = contacts.get_inbox_address();
 
-    handle.send(MyMessage::Data(0));
-    handle.send(MyMessage::Data(11));
-    handle.send(MyMessage2 { data: 42 });
-    handle.send(MyMessage::Data(0));
-    handle.send(MyMessage::Data(22));
-    handle.send(MyMessage2 { data: 42 });
+        ctrlc::set_handler(move || {
+            ctrlc_tx.send(MyMessage::Exit);
+            println!(" cleanly exiting");
+        })
+        .expect("error setting ctrl-c handler!");
+    }
 
-    handle.join().unwrap();
+    let main_tx = contacts.get_inbox_address();
+    main_tx.send(MyMessage::Data(11));
+    main_tx.send(MyMessage::Sleep(Duration::from_secs(4)));
+    main_tx.send(MyMessage2 { data: 42 });
+    main_tx.send(MyMessage::Data(22));
+    main_tx.send(MyMessage2 { data: 43 });
+    main_tx.send(MyMessage::Sleep(Duration::from_secs(5)));
+
+    contacts.join().unwrap();
 }
