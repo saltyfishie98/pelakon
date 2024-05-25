@@ -22,10 +22,6 @@ pub trait Actor: Sized + Send + 'static {
     fn on_exit(&mut self) {}
 }
 
-trait EnvelopeCallProxy<A: Actor> {
-    fn process(&mut self, act: &mut A, ctx: &mut Context<A>);
-}
-
 pub struct Sender<A: Actor> {
     tx: mpsc::Sender<Envelope<A>>,
 }
@@ -35,7 +31,9 @@ impl<A: Actor> Sender<A> {
         M: Message + Send + 'static,
         A: Receives<M>,
     {
-        self.tx.send(Envelope::new(msg)).unwrap();
+        self.tx
+            .send(Envelope(Box::new(MessageLetter { msg: Some(msg) })))
+            .unwrap();
     }
 }
 impl<A: Actor> Clone for Sender<A> {
@@ -69,24 +67,24 @@ impl<A: Actor> Handle<A> {
 }
 
 pub struct Context<A: Actor> {
-    mailbox: (mpsc::Sender<Envelope<A>>, mpsc::Receiver<Envelope<A>>),
+    mailbox: Mailbox<A>,
     exit: bool,
 }
 impl<A: Actor> Context<A> {
     fn new() -> Self {
         Self {
-            mailbox: mpsc::channel(),
+            mailbox: mpsc::channel().into(),
             exit: false,
         }
     }
 
     fn run(mut self, mut actor: A) -> Handle<A> {
-        let tx = self.mailbox.0.clone();
+        let tx = self.mailbox.tx.clone();
 
         let thread_handle = thread::spawn(move || {
             actor.on_entry();
-            while let Ok(mut msg) = self.mailbox.1.recv() {
-                msg.data.process(&mut actor, &mut self);
+            while let Ok(mut letter) = self.mailbox.rx.recv() {
+                letter.0.process(&mut actor, &mut self);
                 if self.exit {
                     break;
                 }
@@ -105,28 +103,33 @@ impl<A: Actor> Context<A> {
     }
 }
 
-pub struct Envelope<A: Actor> {
-    data: Box<dyn EnvelopeCallProxy<A> + Send>,
+struct Mailbox<A: Actor> {
+    tx: mpsc::Sender<Envelope<A>>,
+    rx: mpsc::Receiver<Envelope<A>>,
 }
-impl<A: Actor> Envelope<A> {
-    fn new<M>(msg: M) -> Self
-    where
-        A: Receives<M>,
-        M: Message + Send + 'static,
-    {
-        Envelope {
-            data: Box::new(EnvelopeProxy { msg: Some(msg) }),
+impl<A: Actor> From<(mpsc::Sender<Envelope<A>>, mpsc::Receiver<Envelope<A>>)> for Mailbox<A> {
+    fn from(value: (mpsc::Sender<Envelope<A>>, mpsc::Receiver<Envelope<A>>)) -> Self {
+        Self {
+            tx: value.0,
+            rx: value.1,
         }
     }
 }
 
-struct EnvelopeProxy<M>
+pub struct Envelope<A: Actor>(Box<dyn EnvelopContent<A> + Send>);
+
+trait EnvelopContent<A: Actor> {
+    fn process(&mut self, act: &mut A, ctx: &mut Context<A>);
+}
+
+struct MessageLetter<M>
 where
     M: Message + Send,
 {
     msg: Option<M>,
 }
-impl<A, M> EnvelopeCallProxy<A> for EnvelopeProxy<M>
+
+impl<A, M> EnvelopContent<A> for MessageLetter<M>
 where
     M: Message + Send + 'static,
     A: Actor + Receives<M>,
