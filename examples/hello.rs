@@ -1,71 +1,130 @@
-use std::{thread::sleep, time::Duration};
+#![allow(dead_code)]
+
+use std::{error::Error, thread::sleep, time::Duration};
 
 use pelakon::*;
 
 #[derive(Message)]
-enum MyMessage {
-    Data(u32),
+enum ActorMessage {
+    Data(String),
     Sleep(Duration),
     Exit,
 }
 
-#[derive(Message)]
-struct MyMessage2 {
-    data: u32,
-}
-
 struct MyActor {
-    state: u32,
+    state: String,
 }
 impl Actor for MyActor {
-    fn on_entry(&mut self) {
-        println!("hello!");
-    }
     fn on_exit(&mut self) {
-        println!("exited!");
+        println!("exited MyActor!");
     }
 }
-impl Receives<MyMessage> for MyActor {
-    fn process(&mut self, msg: MyMessage, ctx: &mut Context<MyActor>) {
+impl Receives<ActorMessage> for MyActor {
+    fn process(&mut self, msg: ActorMessage, ctx: &mut Context<MyActor>) {
         match msg {
-            MyMessage::Data(data) => {
-                self.state += data;
-                println!("state = {}", self.state);
+            ActorMessage::Data(data) => {
+                self.state = data;
+                println!("MyActor state = {}", self.state);
             }
-            MyMessage::Sleep(dur) => {
-                println!("sleeping for {} seconds", dur.as_secs_f32());
+            ActorMessage::Sleep(dur) => {
                 sleep(dur);
             }
-            MyMessage::Exit => ctx.terminate(),
+            ActorMessage::Exit => ctx.terminate(),
         };
     }
 }
-impl Receives<MyMessage2> for MyActor {
-    fn process(&mut self, msg: MyMessage2, _: &mut Context<MyActor>) {
-        println!("MyMassage2.data: {}", msg.data);
+
+struct AnotherActor {
+    state: String,
+}
+impl Actor for AnotherActor {
+    fn on_exit(&mut self) {
+        println!("exited AnotherActor!");
+    }
+}
+impl Receives<ActorMessage> for AnotherActor {
+    fn process(&mut self, msg: ActorMessage, ctx: &mut Context<AnotherActor>) {
+        match msg {
+            ActorMessage::Data(data) => {
+                self.state = data;
+                println!("AnotherActor state = {}", self.state);
+            }
+            ActorMessage::Sleep(dur) => {
+                sleep(dur);
+            }
+            ActorMessage::Exit => ctx.terminate(),
+        };
     }
 }
 
 fn main() {
-    let contacts = MyActor { state: 0 }.start();
+    run_single().unwrap();
+}
+
+fn run_single() -> Result<(), Box<dyn Error>> {
+    let actor1_contacts = MyActor {
+        state: String::default(),
+    }
+    .start();
 
     {
-        let ctrlc_tx = contacts.get_inbox_address();
+        let actor1_ctrlc_tx = actor1_contacts.get_inbox_address();
 
         ctrlc::set_handler(move || {
-            ctrlc_tx.send(MyMessage::Exit);
-            println!(" cleanly exiting");
+            actor1_ctrlc_tx.send(ActorMessage::Exit).unwrap();
+            println!("...cleanly exiting");
         })
         .expect("error setting ctrl-c handler!");
     }
 
-    let main_tx = contacts.get_inbox_address();
-    main_tx.send(MyMessage::Data(11));
-    main_tx.send(MyMessage::Sleep(Duration::from_secs(4)));
-    main_tx.send(MyMessage2 { data: 42 });
-    main_tx.send(MyMessage::Data(22));
-    main_tx.send(MyMessage2 { data: 43 });
-    main_tx.send(MyMessage::Sleep(Duration::from_secs(5)));
+    let actor1_tx = actor1_contacts.get_inbox_address();
 
-    contacts.join().unwrap();
+    actor1_tx.send(ActorMessage::Sleep(Duration::from_secs(2)))?;
+    actor1_tx.send(ActorMessage::Data(String::from("first")))?;
+    actor1_tx.send(ActorMessage::Data(String::from("second")))?;
+    actor1_tx.send(ActorMessage::Exit)?;
+    actor1_tx.send(ActorMessage::Data(String::from("third")))?;
+
+    actor1_contacts.join().unwrap();
+    Ok(())
+}
+
+fn run_multiple() -> Result<(), Box<dyn Error>> {
+    let actor1_contacts = MyActor {
+        state: String::default(),
+    }
+    .start();
+
+    let actor2_contacts = AnotherActor {
+        state: String::default(),
+    }
+    .start();
+
+    {
+        let actor1_ctrlc_tx = actor1_contacts.get_inbox_address();
+        let actor2_ctrlc_tx = actor2_contacts.get_inbox_address();
+
+        ctrlc::set_handler(move || {
+            actor1_ctrlc_tx.send(ActorMessage::Exit).unwrap();
+            actor2_ctrlc_tx.send(ActorMessage::Exit).unwrap();
+            println!("...cleanly exiting");
+        })
+        .expect("error setting ctrl-c handler!");
+    }
+
+    let actor1_tx = actor1_contacts.get_inbox_address();
+    let actor2_tx = actor2_contacts.get_inbox_address();
+
+    actor2_tx.send(ActorMessage::Data(String::from("start")))?;
+    actor2_tx.send(ActorMessage::Sleep(Duration::from_secs(3)))?;
+    actor2_tx.send(ActorMessage::Data(String::from("after 1st pause")))?;
+    actor1_tx.send(ActorMessage::Data(String::from("start")))?;
+    actor1_tx.send(ActorMessage::Sleep(Duration::from_secs(5)))?;
+    actor2_tx.send(ActorMessage::Data(String::from("after 1st pause")))?;
+    actor1_tx.send(ActorMessage::Data(String::from("after 2nd pause")))?;
+
+    actor1_contacts.join().unwrap();
+    actor2_contacts.join().unwrap();
+
+    Ok(())
 }

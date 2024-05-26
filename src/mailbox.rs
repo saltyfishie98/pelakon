@@ -1,4 +1,4 @@
-use crate::{Actor, Context, Message, Receives};
+use crate::{Actor, Context};
 use std::sync::mpsc;
 
 pub(crate) struct Mailbox<A: Actor> {
@@ -15,27 +15,9 @@ impl<A: Actor> From<(mpsc::Sender<Mail<A>>, mpsc::Receiver<Mail<A>>)> for Mailbo
 }
 
 pub(crate) struct Mail<A: Actor> {
-    pub(crate) content: Box<dyn Letter<A> + Send>,
+    pub(crate) content: Box<dyn MailContent<A> + Send>,
 }
 
-pub(crate) trait Letter<A: Actor> {
+pub(crate) trait MailContent<A: Actor> {
     fn process(&mut self, act: &mut A, ctx: &mut Context<A>);
-}
-
-pub(crate) struct MessageLetter<M>
-where
-    M: Message + Send,
-{
-    pub(crate) msg: Option<M>,
-}
-impl<A, M> Letter<A> for MessageLetter<M>
-where
-    M: Message + Send + 'static,
-    A: Actor + Receives<M>,
-{
-    fn process(&mut self, act: &mut A, ctx: &mut Context<A>) {
-        if let Some(msg) = self.msg.take() {
-            <A as Receives<M>>::process(act, msg, ctx);
-        }
-    }
 }

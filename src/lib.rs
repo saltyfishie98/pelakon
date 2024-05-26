@@ -5,7 +5,7 @@ pub use macros::*;
 use mailbox::*;
 use std::{
     sync::mpsc,
-    thread::{self, JoinHandle, Result},
+    thread::{self, JoinHandle},
 };
 
 pub trait Actor: Sized + Send + 'static {
@@ -33,7 +33,6 @@ impl<A: Actor> Context<A> {
         let tx = self.mailbox.tx.clone();
 
         let thread_handle = thread::spawn(move || {
-            actor.on_entry();
             while let Ok(mut letter) = self.mailbox.rx.recv() {
                 letter.content.process(&mut actor, &mut self);
                 if self.exit {
@@ -50,6 +49,7 @@ impl<A: Actor> Context<A> {
     }
 
     pub fn terminate(&mut self) {
+        // call on_terminate
         self.exit = true;
     }
 }
@@ -63,7 +63,7 @@ impl<A: Actor> ContactInfo<A> {
         self.inbox.clone()
     }
 
-    pub fn join(self) -> Result<()> {
+    pub fn join(self) -> thread::Result<()> {
         self.thread_handle.join()
     }
 }
@@ -76,27 +76,44 @@ where
     fn process(&mut self, msg: T, ctx: &mut Context<Self>);
 }
 
-/// The inbox of an actor to send messages to
 pub struct Inbox<A: Actor> {
     tx: mpsc::Sender<Mail<A>>,
 }
 impl<A: Actor> Inbox<A> {
-    pub fn send<M>(&self, msg: M)
+    pub fn send<M>(&self, msg: M) -> Result<(), mpsc::SendError<()>>
     where
         M: Message + Send + 'static,
         A: Receives<M>,
     {
         self.tx
             .send(Mail {
-                content: Box::new(MessageLetter { msg: Some(msg) }),
+                content: Box::new(ActorMessage { msg: Some(msg) }),
             })
-            .unwrap();
+            .map_err(|mpsc::SendError(_mail)| mpsc::SendError(()))
     }
 }
 impl<A: Actor> Clone for Inbox<A> {
     fn clone(&self) -> Self {
         Self {
             tx: self.tx.clone(),
+        }
+    }
+}
+
+struct ActorMessage<M>
+where
+    M: Message + Send,
+{
+    msg: Option<M>,
+}
+impl<A, M> MailContent<A> for ActorMessage<M>
+where
+    M: Message + Send + 'static,
+    A: Actor + Receives<M>,
+{
+    fn process(&mut self, act: &mut A, ctx: &mut Context<A>) {
+        if let Some(msg) = self.msg.take() {
+            <A as Receives<M>>::process(act, msg, ctx);
         }
     }
 }
